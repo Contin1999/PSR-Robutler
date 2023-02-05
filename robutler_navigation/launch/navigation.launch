@@ -1,0 +1,7 @@
+<launch>
+    <!-- launch the navigation package -->
+    <include file="$(find robutler_navigation)/launch/localization.launch">
+    </include>
+    <include file="$(find robutler_navigation)/launch/move_base.launch">
+    </include>
+</launch>
