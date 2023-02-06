@@ -59,9 +59,9 @@ class image_converter:
 
     #-----------------------------------------------
     
-    cv2.imshow('Image', cv_image)
-    cv2.imshow("Mask window", vid_mask)
-    cv2.waitKey(3)
+    # cv2.imshow('Image', cv_image)
+    # cv2.imshow("Mask window", vid_mask)
+    # cv2.waitKey(3)
 
     try:
       self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
