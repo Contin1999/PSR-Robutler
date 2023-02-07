@@ -1,0 +1,8 @@
+<launch>
+    <!-- launch the menu -->
+    <node name="menu" pkg="robutler_menu" type="menu.py"/>
+
+    <!-- launch the mission esecutor-->
+    <node name="missions" pkg="robutler_menu" type="missions.py"/>
+    
+</launch>

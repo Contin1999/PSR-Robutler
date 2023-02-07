@@ -32,41 +32,51 @@ from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
 from visualization_msgs.msg import *
 
+from functools import partial
+import subprocess
+
+from std_msgs.msg import String
+
 server = None
 marker_pos = 0
 
 menu_handler = MenuHandler()
 
-h_first_entry = 0
-h_mode_last = 0
+pub = rospy.Publisher('visualization_marker', Marker, queue_size=10)
 
-def enableCb( feedback ):
-    handle = feedback.menu_entry_id
-    state = menu_handler.getCheckState( handle )
+rooms = ['kitchen','living_room','small_bathroom','bathroom','double_room','single_room','study_room','hallway'] # from go_to_specific_point_on_map.py
 
-    if state == MenuHandler.CHECKED:
-        menu_handler.setCheckState( handle, MenuHandler.UNCHECKED )
-        rospy.loginfo("Hiding first menu entry")
-        menu_handler.setVisible( h_first_entry, False )
-    else:
-        menu_handler.setCheckState( handle, MenuHandler.CHECKED )
-        rospy.loginfo("Showing first menu entry")
-        menu_handler.setVisible( h_first_entry, True )
+locations = ["living_room", "double_room", "single_room", "study_room", "bathroom"] # from spawn_object.py
 
-    menu_handler.reApply( server )
-    rospy.loginfo("update")
-    server.applyChanges()
+objects = ['sphere_v', 'book_pink', 'beer', 'parrot_bebop_2', 'hammer','lamp_table_small','mug_beer','newspaper_3','can_fanta','donut_1','person_standing']# from spawn_object.py
 
-def modeCb(feedback):
-    global h_mode_last
-    menu_handler.setCheckState( h_mode_last, MenuHandler.UNCHECKED )
-    h_mode_last = feedback.menu_entry_id
-    menu_handler.setCheckState( h_mode_last, MenuHandler.CHECKED )
+missions = [
+            "find a purple sphere",
+            "check if the pc is in the office",
+            "check if there is someone in the living room"
+            ]
 
-    rospy.loginfo("Switching to menu entry #" + str(h_mode_last))
-    menu_handler.reApply( server )
-    print ("DONE")
-    server.applyChanges()
+#-------------------------------------------------------
+# definition of callback--------------------------------
+#-------------------------------------------------------
+
+def marker(text):
+    marker = Marker()
+    marker.header.frame_id = "base_link"
+    marker.type = marker.TEXT_VIEW_FACING
+    marker.scale.z = 0.35
+    marker.color.a = 1.0
+    marker.color.r = 0
+    marker.color.g = 1
+    marker.color.b = 0
+    marker.pose.position.x = 0
+    marker.pose.position.y = 0
+    marker.pose.position.z = 1
+    marker.pose.orientation.w = 1.0
+    marker.text = text
+    marker.lifetime = rospy.Duration(2)
+    
+    return marker
 
 def makeBox( msg ):
     marker = Marker()
@@ -78,23 +88,16 @@ def makeBox( msg ):
     marker.color.r = 0.5
     marker.color.g = 0.5
     marker.color.b = 0.5
-    marker.color.a = 1.0
+    marker.color.a = 0.0 # alpha to zero-->not visible
 
     return marker
-
-def makeBoxControl( msg ):
-    control = InteractiveMarkerControl()
-    control.always_visible = True
-    control.markers.append( makeBox(msg) )
-    msg.controls.append( control )
-    return control
 
 def makeEmptyMarker( dummyBox=True ):
     global marker_pos
     int_marker = InteractiveMarker()
     int_marker.header.frame_id = "base_link"
-    int_marker.pose.position.y = -3.0 * marker_pos
-    marker_pos += 1
+    # int_marker.pose.position.y = -3.0 * marker_pos
+    # marker_pos += 1
     int_marker.scale = 1
     return int_marker
 
@@ -112,25 +115,169 @@ def makeMenuMarker( name ):
 
     server.insert( int_marker )
 
-def deepCb( feedback ):
-    rospy.loginfo("The deep sub-menu has been found.")
+def mode_navigate(room, feedback):
+    text = "Go to "+str(room)
+    rospy.loginfo(text)
+    text_show = marker(text)
+    pub.publish(text_show)
+
+    bashCommand = "rosrun robutler_navigation go_to_specific_point_on_map.py -room "+str(room)
+    nav_process = subprocess.Popen(bashCommand.split())
+
+def mode_detect(type, feedback):
+    global h_yolo, h_color
+    global  proc_yolo, proc_color
+    state_yolo = menu_handler.getCheckState( h_yolo )
+    state_color = menu_handler.getCheckState( h_color )
+
+    if type == 'yolo':
+        if state_yolo == MenuHandler.CHECKED:
+            text = "detection "+str(type)+' deactivated'
+            rospy.loginfo(text)
+            text_show = marker(text)
+            pub.publish(text_show)
+
+            menu_handler.setCheckState( h_yolo, MenuHandler.UNCHECKED )
+            proc_yolo.kill()
+        else:
+            text = "detection "+str(type)+' activated'
+            rospy.loginfo(text)
+            text_show = marker(text)
+            pub.publish(text_show)
+
+            menu_handler.setCheckState( h_yolo, MenuHandler.CHECKED )
+
+            bashCommand = "roslaunch robutler_detection yolov7.launch"
+            proc_yolo = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
+
+    if type == 'by_color':
+        if state_color == MenuHandler.CHECKED:
+            text = "detection "+str(type)+' deactivated'
+            rospy.loginfo(text)
+            text_show = marker(text)
+            pub.publish(text_show)
+
+            menu_handler.setCheckState( h_color, MenuHandler.UNCHECKED )
+            proc_color.kill()
+        else:
+            text = "detection "+str(type)+' activated'
+            rospy.loginfo(text)
+            text_show = marker(text)
+            pub.publish(text_show)
+
+            menu_handler.setCheckState( h_color, MenuHandler.CHECKED )
+
+            bashCommand = "rosrun robutler_detection detect_color.py"
+            proc_color  = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
+
+    menu_handler.reApply( server )
+    server.applyChanges()
+
+def mode_photo(feedback):
+    text = 'take a photo...'
+    rospy.loginfo(text)
+    text_show = marker(text)
+    pub.publish(text_show)
+
+    bashCommand = "rosrun robutler_detection take_photo.py"
+    photo_process = subprocess.Popen(bashCommand.split())#, stdout=subprocess.PIPE)
+    # output, error = process.communicate()
+    # print(output)
+
+def mode_spawn(feedback):
+    global h_object_last, h_location_last
+
+    object = menu_handler.getTitle(h_object_last)
+    location = menu_handler.getTitle(h_location_last)
+
+    text = 'spawn '+str(object) + ' in ' + str(location)
+    rospy.loginfo(text)
+    text_show = marker(text)
+    pub.publish(text_show)
+
+    bashCommand = "rosrun psr_apartment_description spawn_object.py -object "+str(object) + " -room "+str(location)
+    spawn_process = subprocess.Popen(bashCommand.split())
+
+def mode_mission(mission,feedback):
+    text = 'elaborate mission: '+str(mission)
+    rospy.loginfo(text)
+    text_show = marker(text)
+    pub.publish(text_show)
+
+    pub_mission.publish(mission)
+
+def change_check_object(object, feedback):
+    global h_object_last
+    print(h_object_last)
+    menu_handler.setCheckState( h_object_last, MenuHandler.UNCHECKED )
+    h_object_last = feedback.menu_entry_id
+    menu_handler.setCheckState( h_object_last, MenuHandler.CHECKED )
+
+    rospy.loginfo("Switching to object: " + str(object))
+    menu_handler.reApply( server )
+    server.applyChanges()
+
+def change_check_location(location, feedback):
+    global h_location_last
+
+    menu_handler.setCheckState( h_location_last, MenuHandler.UNCHECKED )
+    h_location_last = feedback.menu_entry_id
+    menu_handler.setCheckState( h_location_last, MenuHandler.CHECKED )
+
+    rospy.loginfo("Switching to location: " + str(location))
+    menu_handler.reApply( server )
+    server.applyChanges()
+
+def callback_sub_mission(data):
+    text = data.data
+    text_show = marker(text)
+    pub.publish(text_show)
 
 def initMenu():
-    global h_first_entry, h_mode_last
-    h_first_entry = menu_handler.insert( "First Entry" )
-    entry = menu_handler.insert( "deep", parent=h_first_entry)
-    entry = menu_handler.insert( "sub", parent=entry )
-    entry = menu_handler.insert( "menu", parent=entry, callback=deepCb )
 
-    menu_handler.setCheckState( menu_handler.insert( "Show First Entry", callback=enableCb ), MenuHandler.CHECKED )
+    # NAVIGATION
+    global h_room_last
+    nav_handler = menu_handler.insert( "navigation" )
+    for room in rooms:
+        s = "go to: " + str(room)
+        h_room_last = menu_handler.insert( s, parent=nav_handler, callback=partial(mode_navigate,room) )
 
-    sub_menu_handle = menu_handler.insert( "Switch" )
-    for i in range(5):
-        s = "Mode " + str(i)
-        h_mode_last = menu_handler.insert( s, parent=sub_menu_handle, callback=modeCb )
-        menu_handler.setCheckState( h_mode_last, MenuHandler.UNCHECKED)
+    # DETECTION
+    global h_yolo, h_color
+    detect_handler = menu_handler.insert( "detection" )
+    h_yolo = menu_handler.insert( 'yolo', parent=detect_handler, callback=partial(mode_detect,'yolo') )
+    menu_handler.setCheckState( h_yolo, MenuHandler.UNCHECKED)
+    h_color = menu_handler.insert( 'detection by color', parent=detect_handler, callback=partial(mode_detect,'by_color') )
+    menu_handler.setCheckState( h_color, MenuHandler.UNCHECKED)
+
+    photo_handler = menu_handler.insert( "take a photo" , callback = mode_photo)
+
+    # SPAWN OBJECTS
+    spawn_handler = menu_handler.insert( "spawn object" )
+
+    global h_object_last
+    spawn_obj_handler = menu_handler.insert( 'object', parent=spawn_handler)
+    for object in objects:
+        h_object_last = menu_handler.insert( str(object), parent = spawn_obj_handler, callback=partial(change_check_object, object))
+        menu_handler.setCheckState( h_object_last, MenuHandler.UNCHECKED)
     # check the very last entry
-    menu_handler.setCheckState( h_mode_last, MenuHandler.CHECKED )
+    menu_handler.setCheckState( h_object_last, MenuHandler.CHECKED )
+
+    global h_location_last
+    spawn_loc_handler = menu_handler.insert( 'location', parent=spawn_handler)
+    for location in locations:
+        h_location_last = menu_handler.insert( str(location), parent = spawn_loc_handler, callback=partial(change_check_location, location))
+        menu_handler.setCheckState( h_location_last, MenuHandler.UNCHECKED)
+    # check the very last entry
+    menu_handler.setCheckState( h_location_last, MenuHandler.CHECKED )
+
+    spawn_spawn_handler = menu_handler.insert('spawn!',parent = spawn_handler, callback=mode_spawn)
+
+    # MISSIONS 
+    mission_handler = menu_handler.insert( "missions" )
+    for mission in missions:
+        entry = menu_handler.insert( str(mission), parent = mission_handler, callback=partial(mode_mission,mission) )
+
 
 if __name__=="__main__":
     rospy.init_node("menu")
@@ -138,14 +285,14 @@ if __name__=="__main__":
     server = InteractiveMarkerServer("menu")
 
     initMenu()
-    
-    makeMenuMarker( "marker1" )
-    # makeMenuMarker( "marker2" )
 
-    menu_handler.apply( server, "marker1" )
-    # menu_handler.apply( server, "marker2" )
+    # mission using the ros topic
+    pub_mission = rospy.Publisher('mission', String, queue_size=10)
+    sub_mission = rospy.Subscriber('mission_state',String,queue_size = 10, callback= callback_sub_mission)
+    
+    makeMenuMarker( "marker_robot" )
+
+    menu_handler.apply( server, "marker_robot" )
     server.applyChanges()
 
     rospy.spin()
-#---------------------copied code
-    # pub = rospy.Publisher('message', String, queue_size=10)
